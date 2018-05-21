@@ -1,0 +1,167 @@
+/**
+* @file cli_CmdSetTFOLicense.cpp
+* @brief
+* set tfo-license コマンド処理
+*
+* (C) FUJITSU LIMITED 2018
+*/
+#include "cli_CmdTFO.h"
+
+/// 機能データ構造体
+typedef struct {
+    char Key[CLI_CMN_PRM_LICNESE_KEY_SIZE + 1];    ///< ライセンスキー
+} CLI_CMD_SET_TFO_LICENSE_FUNC_DATA;
+
+STATUS cli_SetTFOLicensePreChk(cliInfo *pCliInfo);                                                    ///< コマンド実行条件検証用サブ関数
+STATUS cli_SetTFOLicenseGetParam(cliInfo *pCliInfo, CLI_CMD_SET_TFO_LICENSE_FUNC_DATA *pFuncData);    ///< パラメータ取得、および入力値検証用サブ関数
+STATUS cli_SetTFOLicenseGuard(cliInfo *pCliInfo, CLI_CMD_SET_TFO_LICENSE_FUNC_DATA *pFuncData);       ///< 実行時検証用サブ関数用サブ関数
+STATUS cli_SetTFOLicenseExec(cliInfo *pCliInfo);                                                      ///< 設定処理(NIM-PCC発行)用サブ関数
+
+/**
+* @brief
+* set tfo-license コマンド処理関数
+*
+* - コマンド実行条件検証
+* - パラメータの取得、および入力値検証
+* - 実行時検証
+* - 設定処理(NIM-PCC発行)
+* - software向け結果表示
+*
+* @retval CLI_CMD_RC_OK    処理成功
+* @retval CLI_CMD_RC_ERROR エラー発生
+*/
+STATUS cli_SetTFOLicense(cliInfo *pCliInfo)
+{
+    CLI_CMD_SET_TFO_LICENSE_FUNC_DATA funcData = {0};
+
+    // コマンド実行条件検証
+    if (cli_SetTFOLicensePreChk(pCliInfo) != CLI_CMD_RC_OK) {
+        return CLI_CMD_RC_ERROR;
+    }
+
+    // パラメータの取得、および入力値検証
+    if (cli_SetTFOLicenseGetParam(pCliInfo, &funcData) != CLI_CMD_RC_OK) {
+        return CLI_CMD_RC_ERROR;
+    }
+
+    // 実行時検証
+    if (cli_SetTFOLicenseGuard(pCliInfo, &funcData) != CLI_CMD_RC_OK) {
+        return CLI_CMD_RC_ERROR;
+    }
+
+    // 設定処理(NIM-PCC発行)
+    if (cli_SetTFOLicenseExec(pCliInfo) != CLI_CMD_RC_OK) {
+        return CLI_CMD_RC_ERROR;
+    }
+
+    // software向け結果表示
+    cli_CmnOutSoftStsOK(pCliInfo);
+
+    return CLI_CMD_RC_OK;
+}
+
+/**
+* @brief
+* set tfo-license のコマンド実行条件検証用サブ関数
+*
+* - 装置のモデルがコマンドに対応していない(DX100 S3の国内モデル(REC非サポート))
+* - 既にTFOライセンスが設定されている
+*
+* @retval CLI_CMD_RC_OK    処理成功
+* @retval CLI_CMD_RC_ERROR エラー発生
+*/
+STATUS cli_SetTFOLicensePreChk(cliInfo *pCliInfo)    ///< [in] CLI Info
+{
+    // 装置のモデルがコマンドに対応していない(DX100 S3の国内モデル(REC非サポート))
+    if (!cli_CmtIsRECSupport()) {
+        cli_CmnLogSetErrInfo(pCliInfo, CLI_CMD_ERR__DEV_MODEL_NOT_SUPPORT, CLI_INTCODE_CMD_TFO_50, NULL, NULL, NULL);
+        return CLI_CMD_RC_ERROR;
+    }
+
+    // 既にTFOライセンスが設定されている
+    if (CLI_CMT_GET_TFO_MODE() == CNFG_TFO_MODE_VALID) {
+        cli_CmnLogSetErrInfo(pCliInfo, CLI_CMD_ERR__DEV_ALREADY_REGIST_TFO_LICENSE, CLI_INTCODE_CMD_TFO_51, NULL, NULL, NULL);
+        return CLI_CMD_RC_ERROR;
+    }
+
+    return CLI_CMD_RC_OK;
+}
+
+/**
+* @brief
+* set tfo-license のパラメータ取得、および入力値検証用サブ関数
+*
+* - -keyの取得、および指定が不当の検証
+*
+* @retval CLI_CMD_RC_OK    処理成功
+* @retval CLI_CMD_RC_ERROR エラー発生
+*/
+STATUS cli_SetTFOLicenseGetParam(cliInfo                           *pCliInfo,     ///< [in] CLI Info
+                                 CLI_CMD_SET_TFO_LICENSE_FUNC_DATA *pFuncData)    ///< [out] 機能データ
+{                 
+    // -keyの取得、および指定が不当の検証
+    if (cli_CmnPrmGetLicenseKey(pCliInfo, mSetTfo_license__key, "-key", pFuncData->Key) != CLI_CMN_PRM_OK) {
+        return CLI_CMD_RC_ERROR;
+    }
+
+    return CLI_CMD_RC_OK;
+}
+
+/**
+* @brief
+* set tfo-license の実行時検証用サブ関数
+*
+* - ライセンスキーが不正
+*
+* @retval CLI_CMD_RC_OK    処理成功
+* @retval CLI_CMD_RC_ERROR エラー発生
+*/
+STATUS cli_SetTFOLicenseGuard(cliInfo                           *pCliInfo,    ///< [in] CLI Info
+                              CLI_CMD_SET_TFO_LICENSE_FUNC_DATA *pFuncData)   ///< [in] 機能データ
+{
+    // ライセンスキーが不正
+    CLI_CMN_MNT_CMD cmd = {0};
+    CLI_CMN_MNT_SET_CMD(cmd, CMM_E_CHECK_LICENSE_KEY, sizeof(CMM_REQ_CHECK_LICENSE_KEY), 0, NULL);
+    ((CMM_REQ_CHECK_LICENSE_KEY *)cmd.ep)->Mode = CMM_CHECK_LICENSE_KEY_MODE_GEN;
+    ((CMM_REQ_CHECK_LICENSE_KEY *)cmd.ep)->Kind = CMM_CHECK_LICENSE_KEY_KIND_TFO;
+    strncpy((char *)((CMM_REQ_CHECK_LICENSE_KEY *)cmd.ep)->LicenseKey, pFuncData->Key, CLI_CMN_PRM_LICNESE_KEY_SIZE);
+    if (cli_CmnMntSend(pCliInfo, &cmd) != CMM_CMDSTATUS_OK) {
+        return CLI_CMD_RC_ERROR;
+    }
+
+    return CLI_CMD_RC_OK;
+}
+
+/**
+* @brief
+* set tfo-license の設定処理(NIM-PCC発行)用サブ関数
+*
+* - TFOライセンスの有効・無効設定の発行処理(NIM-PCC:0x0540の発行)
+* - TFOライセンス設定の進捗取得(NIM-PCC:0x004fの発行)
+*
+* @retval CLI_CMD_RC_OK    処理成功
+* @retval CLI_CMD_RC_ERROR エラー発生
+*/
+STATUS cli_SetTFOLicenseExec(cliInfo                           *pCliInfo,     ///< [in] CLI Info
+                             CLI_CMD_SET_TFO_LICENSE_FUNC_DATA *pFuncData)    ///< [in] 機能データ
+{
+    CLI_CMN_MNT_CMD cmd = {0};
+    CLI_CMN_MNT_PRG prg = {0};
+    
+    // TFOライセンスの有効・無効設定の発行処理(NIM-PCC:0x0540の発行)
+    CLI_CMN_MNT_SET_CMD(cmd, CMM_E_SET_TFO_LICENSE, sizeof(CMM_REQ_SET_TFO_LICENSE), 0, NULL);
+    ((CMM_REQ_SET_TFO_LICENSE *)cmd.ep)->Mode = CMM_SET_TFO_LICENSE_ON;
+    if (cli_CmnMntSend(pCliInfo, &cmd) != CMM_CMDSTATUS_OK) {
+        return CLI_CMD_RC_ERROR;
+    }
+
+    // TFOライセンス設定の進捗取得(NIM-PCC:0x004fの発行)
+    CLI_CMN_MNT_SET_CMD(cmd, CMM_E_CHG_CONFIG_PROG, sizeof(CMM_REQ_CHG_CONFIG_PROG), 0, NULL);
+    ((CMM_REQ_CHG_CONFIG_PROG *)cmd.ep)->CmdCode = CMM_E_SET_TFO_LICENSE;
+    CLI_CMN_MNT_SET_PRG(prg, CMM_E_SET_TFO_LICENSE, CLI_CMN_MNT_PROG_RETRY_MAX_10MIN10);
+    if (cli_CmnMntCheckProg(pCliInfo, &cmd, &prg) != CMM_CMDSTATUS_OK) {
+        return CLI_CMD_RC_ERROR;
+    }
+
+    return CLI_CMD_RC_OK;
+}
